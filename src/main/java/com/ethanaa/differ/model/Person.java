@@ -3,10 +3,11 @@ package com.ethanaa.differ.model;
 import io.github.benas.randombeans.api.EnhancedRandom;
 import lombok.Data;
 
+import java.io.Serializable;
 import java.time.LocalDate;
 
 @Data
-public class Person {
+public class Person implements Serializable {
 
     private String prefix;
     private String firstName;

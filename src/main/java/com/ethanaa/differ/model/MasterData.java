@@ -1,12 +1,13 @@
 package com.ethanaa.differ.model;
 
+import com.ethanaa.differ.DifferApplication;
 import lombok.Data;
-import org.springframework.beans.BeanUtils;
 
+import java.io.*;
 import java.util.UUID;
 
 @Data
-public class MasterData<T> {
+public class MasterData<T extends Serializable> implements Masterable<T>, Serializable {
 
     private UUID enterpriseId;
     private T customer;
@@ -16,15 +17,16 @@ public class MasterData<T> {
         this.enterpriseId = UUID.randomUUID();
     }
 
-    public MasterData(SourceData<T> sourceData) {
+    public MasterData(Masterable<T> masterableData) {
 
         this();
 
-        this.customer = sourceData.getCustomer();
+        this.customer = DifferApplication.deepClone(masterableData.getCustomer());
     }
 
-    public MasterData(MasterData<T> masterData) {
+    @Override
+    public String getMasteryKey() {
 
-        BeanUtils.copyProperties(masterData, this);
+        return enterpriseId.toString();
     }
 }

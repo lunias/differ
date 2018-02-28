@@ -11,6 +11,7 @@ import de.danielbechler.diff.differ.DifferFactory;
 import de.danielbechler.diff.node.DiffNode;
 import de.danielbechler.diff.node.PrintingVisitor;
 import de.danielbechler.diff.node.Visit;
+import de.danielbechler.diff.path.NodePath;
 import io.github.benas.randombeans.EnhancedRandomBuilder;
 import io.github.benas.randombeans.api.EnhancedRandom;
 import io.github.benas.randombeans.api.Randomizer;
@@ -18,6 +19,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+import java.io.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -25,20 +27,24 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static io.github.benas.randombeans.FieldDefinitionBuilder.field;
 
 @SpringBootApplication
 public class DifferApplication implements CommandLineRunner {
 
-	private ObjectDiffer differ = ObjectDifferBuilder.startBuilding()
+	private static final ObjectDiffer DIFFER = ObjectDifferBuilder.startBuilding()
 			.comparison()
 			  .ofType(LocalDateTime.class).toUseEqualsMethod()
 			  .ofType(LocalDate.class).toUseEqualsMethod()
 			.and()
+			.inclusion()
+			  .exclude().propertyName("masteryKey")
+			.and()
 			.build();
 
-	private EnhancedRandom enhancedRandom = EnhancedRandomBuilder.aNewEnhancedRandomBuilder()
+	private static final EnhancedRandom RANDDOM_GEN = EnhancedRandomBuilder.aNewEnhancedRandomBuilder()
 			.build();
 
 	public static void main(String[] args) {
@@ -51,30 +57,49 @@ public class DifferApplication implements CommandLineRunner {
 
 		System.out.println("Welcome to Differ.");
 
-		List<SourceData> sourceDataList = new ArrayList<>();
+		List<SourceData<Person>> sourceData = new ArrayList<>();
 		for (int i = 0; i < 2; i++) {
-			sourceDataList.add(buildSourceData(i));
+			sourceData.add(buildSourceData(i, Person.class));
 		}
 
-		Collection<MasterData> masteredData = master(sourceDataList);
+		long initial = System.currentTimeMillis();
+
+		List<MasterData<Person>> masteredData =
+				master(sourceData.stream())
+						.collect(Collectors.toList());
+
+		System.out.println("Took: " + (System.currentTimeMillis() - initial) / 1000 + "s");
 	}
 
-	private Collection<MasterData> master(Collection<SourceData> sourceData) {
-		return sourceData.stream()
-				.collect(Collectors.groupingBy(SourceData::getSourceId,
+	private static <T extends Serializable> SourceData<T> buildSourceData(int i, Class<T> customerClass) {
+
+		Random random = new Random(System.nanoTime());
+
+		SourceData sourceData = new SourceData();
+		sourceData.setSourceId(String.valueOf(1));
+		sourceData.setSource(Source.values()[random.nextInt(Source.values().length)]);
+		sourceData.setCustomer(Person.random(RANDDOM_GEN));//random.nextBoolean() ? Person.random(enhancedRandom) : Organization.random(enhancedRandom));
+
+		return sourceData;
+	}
+
+	private static <T extends Serializable> Stream<MasterData<T>> master(Stream<? extends Masterable<T>> masterableData) {
+
+		return masterableData
+				.collect(Collectors.groupingBy(Masterable::getMasteryKey,
 						Collectors.reducing(
-								new MasterData(),
+								(MasterData<T>) new MasterData(),
 								MasterData::new,
-								(agg, inc) -> merge(inc, new MasterData(agg), agg))))
-				.values();
+								(agg, inc) -> merge(inc, agg, deepClone(agg)))))
+				.values().stream();
 	}
 
-	private MasterData merge(MasterData modified, MasterData base, MasterData head) {
+	private static <T extends Serializable> MasterData<T> merge(MasterData<T> modified, MasterData<T> base, MasterData<T> head) {
 
 		final DiffNode.Visitor merger = new MergingDifferenceVisitor<>(head, modified);
 		final DiffNode.Visitor printer = new PrintingVisitor(modified, base);
 
-		final DiffNode diff = differ.compare(modified, base);
+		final DiffNode diff = DIFFER.compare(modified, base);
 
 		diff.visit(merger);
 		diff.visit(printer);
@@ -97,31 +122,36 @@ public class DifferApplication implements CommandLineRunner {
 
 			if (node.getState() == DiffNode.State.ADDED) {
 				node.canonicalSet(head, node.canonicalGet(modified));
-			}
-			else if (node.getState() == DiffNode.State.REMOVED) {
+
+			} else if (node.getState() == DiffNode.State.REMOVED) {
 				node.canonicalUnset(head);
-			}
-			else if (node.getState() == DiffNode.State.CHANGED) {
+
+			} else if (node.getState() == DiffNode.State.CHANGED) {
 				if (node.hasChildren()) {
 					node.visitChildren(this);
 					visit.dontGoDeeper();
-				}
-				else {
+				} else {
 					node.canonicalSet(head, node.canonicalGet(modified));
 				}
 			}
 		}
 	}
 
-	private SourceData buildSourceData(int i) {
+	public static <T extends Serializable> T deepClone(T object) {
 
-		Random random = new Random(System.nanoTime());
+		try {
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			ObjectOutputStream oos = new ObjectOutputStream(baos);
+			oos.writeObject(object);
 
-		SourceData sourceData = new SourceData();
-		sourceData.setSourceId(String.valueOf(1));
-		sourceData.setSource(Source.values()[random.nextInt(Source.values().length)]);
-		sourceData.setCustomer(Person.random(enhancedRandom));//random.nextBoolean() ? Person.random(enhancedRandom) : Organization.random(enhancedRandom));
+			ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+			ObjectInputStream ois = new ObjectInputStream(bais);
 
-		return sourceData;
+			return (T) ois.readObject();
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return null;
+		}
 	}
 }
